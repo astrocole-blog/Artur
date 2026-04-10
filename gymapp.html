@@ -7,6 +7,12 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   
+  <link rel="manifest" href="manifest.json">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="GymBro">
+  <link rel="apple-touch-icon" href="icon-192.png">
+    
   <title>Gym Planner Mobile - Series Variables</title>
   <style>
     :root {
@@ -738,13 +744,6 @@
       { id: 'settings', label: 'Ajustes', icon: '⚙️' }
     ];
 
-    // SOLICITUD DE PERMISOS PARA NOTIFICACIONES (PWA)
-    if ('Notification' in window) {
-      if (Notification.permission === 'default') {
-        Notification.requestPermission();
-      }
-    }
-
     let state = loadState();
     let timerInterval = null;
     migrateState();
@@ -756,7 +755,7 @@
         activeRoutineId: id,
         restTime: 60,
         restVolume: 50,
-        timerEndTime: null, // Nuevo: para recuperar el timer si se pausa la app
+        timerEndTime: null,
         routines: {
           [id]: createRoutineObject(id, 'Rutina principal', 'weekly', 7)
         },
@@ -899,7 +898,6 @@
     function getActiveRoutine() {
       return state.routines[state.activeRoutineId];
     }
-
 
     function clearRoutinePending(routine) {
       routine.pendingByDay = {};
@@ -1153,111 +1151,6 @@
         }
         container.appendChild(item);
       });
-    }
-
-    // --- TEMPORIZADOR MEJORADO PARA IOS / SEGUNDO PLANO ---
-    function startRestTimer(btn) {
-      if (timerInterval) clearInterval(timerInterval);
-      
-      const restSeconds = state.restTime || 60;
-      const endTime = Date.now() + (restSeconds * 1000);
-      state.timerEndTime = endTime; // Persistir la hora de fin real
-      saveState();
-
-      const originalText = "⏱️ Descanso";
-      btn.classList.add('btn-warning');
-      
-      // Programar notificación de sistema si el usuario sale de la app
-      // (Requiere que la app esté instalada como PWA en Pantalla de Inicio)
-      if (Notification.permission === "granted") {
-        setTimeout(() => {
-          if (document.visibilityState === 'hidden' && state.timerEndTime === endTime) {
-            new Notification("¡Tiempo cumplido!", {
-              body: "Tu descanso ha terminado.",
-              vibrate: [200, 100, 200]
-            });
-          }
-        }, restSeconds * 1000);
-      }
-
-      timerInterval = setInterval(() => {
-        const now = Date.now();
-        const timeLeft = Math.ceil((endTime - now) / 1000);
-        
-        if (timeLeft <= 0) {
-          finalizarTimer(btn, originalText);
-        } else {
-          btn.textContent = `⏳ ${timeLeft}s`;
-        }
-      }, 1000);
-    }
-
-    function finalizarTimer(btn = null, originalText = "⏱️ Descanso") {
-      if (timerInterval) clearInterval(timerInterval);
-      state.timerEndTime = null;
-      saveState();
-      
-      if (btn) {
-        btn.textContent = originalText;
-        btn.classList.remove('btn-warning');
-      } else {
-        render(); // Si no tenemos el botón (vuelta de segundo plano), renderizamos todo
-      }
-      
-      playBeepAndVibrate();
-      alert("¡Descanso terminado!");
-    }
-
-    // Recuperar el timer al volver a la app
-    window.addEventListener('focus', () => {
-      if (state.timerEndTime) {
-        const now = Date.now();
-        if (now >= state.timerEndTime) {
-          finalizarTimer();
-        } else {
-          // Si todavía queda tiempo, el render() normal actualizará el intervalo
-          // si estamos en la pantalla de entrenamiento.
-          render();
-        }
-      }
-    });
-
-    function playBeepAndVibrate() {
-      // 1. Sonido
-      try {
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        const oscillator1 = audioCtx.createOscillator();
-        const oscillator2 = audioCtx.createOscillator();
-        const gainNode = audioCtx.createGain();
-        
-        oscillator1.connect(gainNode);
-        oscillator2.connect(gainNode);
-        gainNode.connect(audioCtx.destination);
-        
-        oscillator1.type = 'sine';
-        oscillator1.frequency.setValueAtTime(880, audioCtx.currentTime);
-        
-        oscillator2.type = 'square';
-        oscillator2.frequency.setValueAtTime(885, audioCtx.currentTime);
-        
-        const vol = (state.restVolume !== undefined ? state.restVolume : 50) / 100;
-        gainNode.gain.setValueAtTime(vol, audioCtx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.6);
-        
-        oscillator1.start();
-        oscillator2.start();
-        oscillator1.stop(audioCtx.currentTime + 0.6);
-        oscillator2.stop(audioCtx.currentTime + 0.6);
-      } catch(e) { console.log("Audio no soportado"); }
-
-      // 2. Vibración
-      if ("vibrate" in navigator) {
-        navigator.vibrate([300, 100, 300]);
-      }
-    }
-
-    function updateVolumeLabel(val) {
-        document.getElementById('volumeValue').textContent = val;
     }
 
     function reconfigureWeek(selectedDay) {
@@ -1860,6 +1753,114 @@
     function escapeAttr(value) {
       return escapeHtml(value);
     }
+
+    function playBeepAndVibrate() {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator1 = audioCtx.createOscillator();
+        const oscillator2 = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        
+        oscillator1.connect(gainNode);
+        oscillator2.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        
+        oscillator1.type = 'sine';
+        oscillator1.frequency.setValueAtTime(880, audioCtx.currentTime);
+        oscillator2.type = 'square';
+        oscillator2.frequency.setValueAtTime(885, audioCtx.currentTime);
+        
+        const vol = (state.restVolume !== undefined ? state.restVolume : 50) / 100;
+        gainNode.gain.setValueAtTime(vol, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.6);
+        
+        oscillator1.start();
+        oscillator2.start();
+        oscillator1.stop(audioCtx.currentTime + 0.6);
+        oscillator2.stop(audioCtx.currentTime + 0.6);
+      } catch(e) { console.log("Audio no soportado"); }
+
+      if ("vibrate" in navigator) {
+        navigator.vibrate([300, 100, 300]);
+      }
+    }
+
+    function updateVolumeLabel(val) {
+        document.getElementById('volumeValue').textContent = val;
+    }
+
+    // --- LÓGICA DE SERVICE WORKER Y NOTIFICACIONES ---
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').catch(err => console.log(err));
+    }
+
+    window.addEventListener('load', () => {
+      if ('Notification' in window && Notification.permission === 'default') {
+        document.body.addEventListener('click', () => {
+          Notification.requestPermission();
+        }, { once: true });
+      }
+    });
+
+    function startRestTimer(btn) {
+      if (timerInterval) clearInterval(timerInterval);
+      
+      const restSeconds = state.restTime || 60;
+      const endTime = Date.now() + (restSeconds * 1000);
+      state.timerEndTime = endTime; 
+      saveState();
+
+      const originalText = "⏱️ Descanso";
+      btn.classList.add('btn-warning');
+      
+      if ('Notification' in window && Notification.permission === "granted") {
+        setTimeout(() => {
+          if (document.visibilityState === 'hidden' && state.timerEndTime === endTime) {
+            new Notification("¡Tiempo cumplido!", {
+              body: "Tu descanso ha terminado.",
+              icon: "icon-192.png"
+            });
+          }
+        }, restSeconds * 1000);
+      }
+
+      timerInterval = setInterval(() => {
+        const now = Date.now();
+        const timeLeft = Math.ceil((endTime - now) / 1000);
+        
+        if (timeLeft <= 0) {
+          finalizarTimer(btn, originalText);
+        } else {
+          btn.textContent = `⏳ ${timeLeft}s`;
+        }
+      }, 1000);
+    }
+
+    function finalizarTimer(btn = null, originalText = "⏱️ Descanso") {
+      if (timerInterval) clearInterval(timerInterval);
+      state.timerEndTime = null;
+      saveState();
+      
+      if (btn) {
+        btn.textContent = originalText;
+        btn.classList.remove('btn-warning');
+      } else {
+        render(); 
+      }
+      
+      playBeepAndVibrate();
+      alert("¡Descanso terminado!");
+    }
+
+    window.addEventListener('focus', () => {
+      if (state.timerEndTime) {
+        const now = Date.now();
+        if (now >= state.timerEndTime) {
+          finalizarTimer();
+        }
+      }
+    });
 
     handleRoutineTypeChange();
     toggleSeriesTypeFields();
