@@ -746,6 +746,7 @@
 
     let state = loadState();
     let timerInterval = null;
+    let audioContext = null; 
     migrateState();
 
     function createDefaultState() {
@@ -1754,31 +1755,37 @@
       return escapeHtml(value);
     }
 
-    function playBeepAndVibrate() {
+    async function playBeepAndVibrate() {
+      // Intentar reproducir MP3 (mejor para Bluetooth e interrupción de fondo)
       try {
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        const oscillator1 = audioCtx.createOscillator();
-        const oscillator2 = audioCtx.createOscillator();
-        const gainNode = audioCtx.createGain();
-        
-        oscillator1.connect(gainNode);
-        oscillator2.connect(gainNode);
-        gainNode.connect(audioCtx.destination);
-        
-        oscillator1.type = 'sine';
-        oscillator1.frequency.setValueAtTime(880, audioCtx.currentTime);
-        oscillator2.type = 'square';
-        oscillator2.frequency.setValueAtTime(885, audioCtx.currentTime);
-        
-        const vol = (state.restVolume !== undefined ? state.restVolume : 50) / 100;
-        gainNode.gain.setValueAtTime(vol, audioCtx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.6);
-        
-        oscillator1.start();
-        oscillator2.start();
-        oscillator1.stop(audioCtx.currentTime + 0.6);
-        oscillator2.stop(audioCtx.currentTime + 0.6);
-      } catch(e) { console.log("Audio no soportado"); }
+        const audio = new Audio('beep.mp3');
+        audio.volume = (state.restVolume !== undefined ? state.restVolume : 50) / 100;
+        await audio.play();
+      } catch (e) {
+        console.log("MP3 no disponible, usando respaldo sintético");
+        try {
+          if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          if (audioContext.state === 'suspended') await audioContext.resume();
+
+          const osc1 = audioContext.createOscillator();
+          const osc2 = audioContext.createOscillator();
+          const gain = audioContext.createGain();
+          
+          osc1.connect(gain);
+          osc2.connect(gain);
+          gain.connect(audioContext.destination);
+          
+          osc1.frequency.setValueAtTime(880, audioContext.currentTime);
+          osc2.frequency.setValueAtTime(885, audioContext.currentTime);
+          
+          const vol = (state.restVolume !== undefined ? state.restVolume : 50) / 100;
+          gain.gain.setValueAtTime(vol, audioContext.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.6);
+          
+          osc1.start(); osc2.start();
+          osc1.stop(audioContext.currentTime + 0.6); osc2.stop(audioContext.currentTime + 0.6);
+        } catch(err) {}
+      }
 
       if ("vibrate" in navigator) {
         navigator.vibrate([300, 100, 300]);
@@ -1788,8 +1795,6 @@
     function updateVolumeLabel(val) {
         document.getElementById('volumeValue').textContent = val;
     }
-
-    // --- LÓGICA DE SERVICE WORKER Y NOTIFICACIONES ---
 
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(err => console.log(err));
@@ -1803,9 +1808,20 @@
       }
     });
 
-    function startRestTimer(btn) {
+    async function startRestTimer(btn) {
       if (timerInterval) clearInterval(timerInterval);
       
+      // CEBADO DE AUDIO (Bluetooth iOS)
+      try {
+        if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioContext.state === 'suspended') await audioContext.resume();
+        
+        // Abrimos canal multimedia con un audio breve a volumen bajo
+        const audio = new Audio('beep.mp3');
+        audio.volume = 0.01;
+        audio.play().catch(() => {});
+      } catch(e) {}
+
       const restSeconds = state.restTime || 60;
       const endTime = Date.now() + (restSeconds * 1000);
       state.timerEndTime = endTime; 
@@ -1813,18 +1829,16 @@
 
       const originalText = "⏱️ Descanso";
       btn.classList.add('btn-warning');
-      
-      if ('Notification' in window && Notification.permission === "granted") {
-        setTimeout(() => {
-          if (document.visibilityState === 'hidden' && state.timerEndTime === endTime) {
-            new Notification("¡Tiempo cumplido!", {
-              body: "Tu descanso ha terminado.",
-              icon: "icon-192.png"
-            });
-          }
-        }, restSeconds * 1000);
+
+      // ORDEN AL SERVICE WORKER (Para avisar en segundo plano / TikTok)
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: 'SET_TIMER',
+          delay: restSeconds * 1000
+        });
       }
 
+      // Temporizador visual local
       timerInterval = setInterval(() => {
         const now = Date.now();
         const timeLeft = Math.ceil((endTime - now) / 1000);
